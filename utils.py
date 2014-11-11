@@ -13,12 +13,17 @@ def read_aln(aln_filename):
     @return aln             numpy array of sequences in numerical representation.
     """
 
+    # count number of sequences, ignore gap-only sequences
+    empty_seqs = []
+
     with open(aln_filename) as aln_file:
         for i, seq in enumerate(aln_file):
-            pass
+            if seq.count('-') == len(seq.strip()):
+                empty_seqs.append(i)
     
+    print empty_seqs
     # number of sequences
-    B = i+1
+    B = i+1 - len(empty_seqs)
     
     with open(aln_filename) as aln_file:
         seq = aln_file.readline().strip()
@@ -31,10 +36,13 @@ def read_aln(aln_filename):
             'N':8, 'Q':9, 'C':10, 'G':11, 'P':12, 'A':13, 'I':14,\
             'L':15, 'M':16, 'F':17, 'W':18, 'Y':19, 'V':20, '-':21}
 
+    i_nonempty = 0
     with open(aln_filename) as aln_file:
         for i, seq in enumerate(aln_file):
-            seq = seq.strip()
-            aln[i,:] = [aa_dict[aa] for aa in seq]
+            if i not in empty_seqs:
+                seq = seq.strip()
+                aln[i_nonempty,:] = [aa_dict[aa] for aa in seq]
+                i_nonempty += 1
         
     return aln
 
@@ -50,10 +58,15 @@ def seq_identity(seq1, seq2):
     # ignore gaps
     seq1_m = np.ma.masked_where(seq1 == 21, seq1)
     seq2_m = np.ma.masked_where(seq2 == 21, seq2)
-
+    
     # calc identity
     diff = seq2_m - seq1_m
     N = np.ma.count(diff)
+
+    # no identity to sequence with only gaps
+    if N == 0:
+        return 0.0
+
     n_diff = np.size(np.ma.nonzero(diff)[0], 0)
     ident = 1 - (n_diff / float(N))
 
@@ -63,10 +76,11 @@ def seq_identity(seq1, seq2):
 
 def get_per_residue_numseq(aln, threshold):
     """ Calculate number of similar sequences for each column in the
-    alngnment. Similarity is defined as percentage of identical
+    alignment. Similarity is defined as percentage of identical
     residues. Sequences less similar than threshold are counted. 
     
     @param  aln             numpy array of the alignment
+    @param  threshold       similarity threshold
     @return numseq_lst      per residue sequence counts
     """
     numseq_lst = []
@@ -82,7 +96,54 @@ def get_per_residue_numseq(aln, threshold):
     mask[:,:] = (ident_lst > threshold)[:,np.newaxis]
     
     #TODO: apply mask to get sequence counts
-    print mask
+    #print mask
+
+
+def get_weights(aln, threshold):
+    """ Calculate sequence weight based on similarity. Similarity is defined 
+    as percentage of identical residues. Sequences less similar than 
+    threshold are counted. 
+    
+    @param  aln             numpy array of the alignment
+    @param  threshold       similarity threshold
+    @return weights         sequence weights
+    """
+
+    B,N = aln.shape
+    sim_mat = np.empty((B,B))
+    aln_m = np.ma.masked_where(aln == 21, aln)
+
+    for i in xrange(B):
+        diff = aln_m - aln_m[i,:]
+        #n_diff = np.zeros(B, dtype=float)
+        n_diff = np.bincount(np.ma.nonzero(diff)[0])
+        n_diff.resize(B)
+        N = np.ma.count(diff, 1).astype(np.float)
+        #print n_diff
+        #print N
+        #print 1 - (n_diff / N)
+        sim_mat[i,:] = 1 - (n_diff / N)
+
+    num_sim = np.sum(sim_mat >= threshold, 1)
+    #print sim_mat[np.where(num_sim == 0),:]
+    weights = 1./num_sim
+    #print weights
+    return weights
+
+
+
+def get_beff(aln, threshold):
+    """ Calculate number of effective sequences.     
+
+    @param  aln             numpy array of the alignment
+    @param  threshold       similarity threshold
+    @return b_eff           number of effective sequences
+    """
+
+    weights = get_weights(aln, threshold)
+    b_eff = sum(weights)
+    return b_eff
+
 
 
 if __name__ == "__main__":
@@ -90,4 +151,7 @@ if __name__ == "__main__":
     aln_filename = sys.argv[1]
     threshold = float(sys.argv[2])
     aln = read_aln(aln_filename)
-    get_per_residue_numseq(aln, threshold)
+    numseq_lst = get_per_residue_numseq(aln, threshold)
+
+    b_eff = get_beff(aln, threshold)
+    print b_eff
